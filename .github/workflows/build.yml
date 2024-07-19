@@ -1,40 +1,65 @@
 name: Build
 
+env:
+  Solution: .
+  Platform: #Any CPU|Win32|x64
+  Configuration: Release
+  Artifacts: build/$Configuration
+  Branch: ${{github.ref_name}}
+  
 on:
   push:
-
-env:
-  SOLUTION_FILE_PATH: .
-  BUILD_CONFIGURATION: Release
+    Branches: $Branch
+  pull_request:
+    Branches: $Branch
+  workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  build:
+  Windows:
     runs-on: windows-latest
-
     steps:
-    - uses: actions/checkout@v4
+
+    - name: Clone repo and submodules
+      run: git clone --recurse-submodules https://github.com/${{github.repository}}.git . #--branch ${{env.Branch}}
+
+    - name: Get current date, commit hash and count
+      run: |
+        echo "CommitDate=$(git show -s --date=format:'%Y-%m-%d' --format=%cd)" >> $env:GITHUB_ENV
+        echo "CommitHashShort=$(git rev-parse --short=7 HEAD)" >> $env:GITHUB_ENV
+        echo "CommitCount=$(git rev-list --count ${{env.Branch}})" >> $env:GITHUB_ENV
 
     - name: Add MSBuild to PATH
-      uses: microsoft/setup-msbuild@v2
-      with:
-        vs-version: '[12.0]'
+      uses: microsoft/setup-msbuild@v1.0.2
 
     - name: Restore NuGet packages
       working-directory: ${{env.GITHUB_WORKSPACE}}
-      run: nuget restore ${{env.SOLUTION_FILE_PATH}}
+      run: nuget restore ${{env.Solution}}
 
     - name: Build
-      working-directory: ${{env.GITHUB_WORKSPACE}}
-      run: msbuild /m /p:Configuration=${{env.BUILD_CONFIGURATION}} ${{env.SOLUTION_FILE_PATH}}
+      run: |
+        msbuild /m ${{env.Solution}} #/p:Configuration="${{env.Configuration}}"
+        ls -R
+
+    - name: Upload Installer Artifact to GitHub
+      uses: actions/upload-artifact@v2
+      with:
+        name: "${{github.event.repository.name}}_r${{env.CommitCount}}@${{env.CommitHashShort}}"
+        path: "${{github.workspace}}/${{env.Artifacts}}/"
+
+    - name: Compress artifacts
+      uses: vimtor/action-zip@v1.1
+      with:
+        files: '${{env.Artifacts}}/'
+        dest: "build/${{github.event.repository.name}}_r${{env.CommitCount}}@${{env.CommitHashShort}}.zip"
 
     - name: GitHub pre-release
       uses: "marvinpinto/action-automatic-releases@latest"
       with:
         repo_token: "${{secrets.GITHUB_TOKEN}}"
         automatic_release_tag: "latest"
-        prerelease: false
-        title: "3D Vision Direct"
-        files: "Release/*"
+        prerelease: true
+        title: "[${{env.CommitDate}}] ${{github.event.repository.name}} r${{env.CommitCount}}@${{env.CommitHashShort}}"
+        files: "build/${{github.event.repository.name}}_r${{env.CommitCount}}@${{env.CommitHashShort}}.zip"
